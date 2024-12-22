@@ -1,0 +1,261 @@
+import telebot
+from flask import Flask
+from telebot import types
+import pytz
+from datetime import datetime
+import logging
+import threading
+from convertdate import persian
+
+# توکن ربات تلگرام خود را اینجا وارد کنید
+bot_token = "8130259539:AAGkZzGrO9Ni_1-yNkJDp-m6JzLDD-6nNgI"
+bot = telebot.TeleBot(bot_token)
+
+# تنظیمات Flask
+app = Flask(__name__)
+
+# زمان‌شناسی با pytz
+timezone = pytz.timezone('Asia/Tehran')
+
+# تنظیمات لاگ برای دیباگ
+logging.basicConfig(level=logging.INFO)
+
+# لیست اعضای تیم
+members = [
+    "محمد مهدی برزگر",
+    "امیر حسین خسروی",
+    "مریم اطمینان",
+    "حسین بیگدلی"
+]
+
+# اسامی استادی که دسترسی خاص دارند
+professors = ["پریسا رزاقی", "رزاقی", "پریسا", "استاد"]
+
+# دیکشنری برای نگهداری وضعیت کاربر
+user_state = {}
+
+# تابع تبدیل تاریخ میلادی به هجری شمسی
+def get_persian_date():
+    # تاریخ امروز به میلادی
+    now = datetime.now(timezone)
+
+    # تبدیل تاریخ میلادی به هجری شمسی
+    persian_date = persian.from_gregorian(now.year, now.month, now.day)
+
+    # بازگشت تاریخ شمسی به فرمت مناسب با ساعت
+    persian_time = now.strftime('%H:%M:%S')  # ساعت دقیق
+    return f"{persian_date[0]}-{persian_date[1]:02d}-{persian_date[2]:02d} {persian_time}"
+
+# تابع ارسال پیام به مالک ربات
+def send_to_owner(message, is_authorized, user_choice=None, user_name=None):
+    owner_id = 6725646874  # شناسه تلگرام مالک ربات
+
+    # اگر نام وارد شده توسط کاربر وجود داشته باشد
+    user_info = f"""
+    کاربر {message.from_user.first_name} ({message.from_user.id}) پیام ارسال کرد.
+    """
+
+    # اضافه کردن نام وارد شده (اگر وجود داشته باشد)
+    if user_name:
+        user_info += f"\nنام وارد شده توسط کاربر: {user_name}"
+
+    # تاریخ شمسی همراه با ساعت
+    persian_date = get_persian_date()
+
+    # اطلاعات اضافی
+    user_info += f"""
+    نام خانوادگی تلگرام: {message.from_user.last_name if message.from_user.last_name else 'N/A'}
+    شناسه کاربری: {message.from_user.id}
+    نام کاربری تلگرام: {message.from_user.username if message.from_user.username else 'N/A'}
+    زبان: {message.from_user.language_code}
+    زمان آخرین پیام: {persian_date}   
+    آخرین بازدید : {persian_date}
+    """
+
+    # ارسال پیام به مالک
+    if isinstance(message, types.Message):
+        if message.text:
+            bot.send_message(owner_id, f"{user_info}\nمتن پیام: {message.text}")
+            if user_choice:
+                bot.send_message(owner_id, f"کاربر گزینه زیر را انتخاب کرد: {user_choice}")
+        elif message.photo:
+            bot.send_message(owner_id, f"{user_info}\nعکس ارسال شد.")
+            photo_id = message.photo[-1].file_id
+            try:
+                bot.send_photo(owner_id, photo_id)
+            except Exception as e:
+                bot.send_message(owner_id, f"خطا در ارسال عکس: {str(e)}")
+        elif message.video:
+            bot.send_message(owner_id, f"{user_info}\nویدئو ارسال شد.")
+            bot.send_video(owner_id, message.video.file_id)
+        elif message.audio:
+            bot.send_message(owner_id, f"{user_info}\nآهنگ ارسال شد.")
+            bot.send_audio(owner_id, message.audio.file_id)
+        elif message.document:
+            bot.send_message(owner_id, f"{user_info}\nفایل ارسال شد.")
+            bot.send_document(owner_id, message.document.file_id)
+        elif message.voice:
+            bot.send_message(owner_id, f"{user_info}\nپیام صوتی ارسال شد.")
+            bot.send_voice(owner_id, message.voice.file_id)
+        elif message.sticker:
+            bot.send_message(owner_id, f"{user_info}\nاستیکر ارسال شد.")
+            bot.send_sticker(owner_id, message.sticker.file_id)
+        else:
+            bot.send_message(owner_id, f"{user_info}\nپیام ناشناخته ارسال شد.")
+
+# درخواست زمان به کاربر
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    if user_state.get(message.chat.id) == 'blocked':
+        bot.send_message(message.chat.id, "شما دسترسی به این ربات ندارید. لطفاً با مدیر تماس بگیرید.")
+        user_state[message.chat.id] = 'waiting_for_name'  # برای شروع دوباره از اول
+        bot.send_message(message.chat.id, "لطفاً نام خود را وارد کنید تا ادامه دهیم.")
+        bot.register_next_step_handler(message, ask_name)
+        return
+
+    user_state[message.chat.id] = 'waiting_for_name'
+    bot.send_message(message.chat.id, "درود بر شما! لطفاً نام خود را وارد کنید تا ادامه دهیم.")
+    bot.register_next_step_handler(message, ask_name)
+
+# تابع درخواست نام از کاربر
+def ask_name(message):
+    name = message.text.strip()
+
+    if name == "مریم اطمینان":
+        bot.send_message(message.chat.id, """
+اسما از زحماتت به شدت ممنونیم از وقت خیلی خیلی بیشتری که گذاشتی از تحقیق هایی که کردی 😂 😂😂
+        """)
+        send_to_owner(message, is_authorized=True, user_choice="نام وارد شده: " + name, user_name=name)
+        user_state[message.chat.id] = 'in_main_menu'
+        show_main_menu(message)
+    elif name == "محمد مهدی برزگر":
+        bot.send_message(message.chat.id, """
+thay is shayan. how can you help your self
+        """)
+        send_to_owner(message, is_authorized=True, user_choice="نام وارد شده: " + name, user_name=name)
+        user_state[message.chat.id] = 'in_main_menu'
+        show_main_menu(message)
+    elif name in members:
+        bot.send_message(message.chat.id, f"سلام {name}! خوش آمدید.")
+        send_to_owner(message, is_authorized=True, user_choice="نام وارد شده: " + name, user_name=name)
+        user_state[message.chat.id] = 'in_main_menu'
+        show_main_menu(message)
+    elif name in professors:
+        bot.send_message(message.chat.id, """
+سلام استاد عزیز 🎓
+
+خوشحالیم که دانشجوی شما بودیم و فرصت یادگیری از شما را داشتیم. 
+زحمات و دانش شما همواره کمک کننده ما بوده و امیدواریم در درس های دیگر نیز دانشجوی شما باشیم..
+
+با آرزوی موفقیت بیشتر برای شما،
+محمد مهدی برزگر, مریم اطمینان
+به جز امیر حسین خسروی و حسین بیگدلی
+        """)
+        send_to_owner(message, is_authorized=True, user_choice="نام وارد شده: " + name, user_name=name)
+        user_state[message.chat.id] = 'in_main_menu'
+        show_main_menu(message)
+    else:
+        bot.send_message(message.chat.id, "شما دسترسی به این ربات ندارید. لطفاً با مدیر تماس بگیرید.")
+        send_to_owner(message, is_authorized=False, user_choice="نام وارد شده: " + name, user_name=name)
+        user_state[message.chat.id] = 'blocked'
+
+# نمایش منو اصلی
+def show_main_menu(message):
+    if user_state.get(message.chat.id) == 'blocked':
+        return
+
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True, row_width=1)
+    button1 = types.KeyboardButton("پروژه‌ها")
+    button2 = types.KeyboardButton("لیست اعضا")
+    markup.add(button1, button2)
+
+    bot.send_message(message.chat.id, "لطفاً یکی از گزینه‌ها را انتخاب کنید:", reply_markup=markup)
+
+# پاسخ به گزینه "پروژه‌ها"
+@bot.message_handler(func=lambda message: message.text == "پروژه‌ها")
+def send_projects(message):
+    send_to_owner(message, is_authorized=True, user_choice="پروژه‌ها", user_name=None)
+    if user_state.get(message.chat.id) == 'blocked':
+        return
+
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True, row_width=1)
+    button1 = types.KeyboardButton("ساختن شبکه")
+    button2 = types.KeyboardButton("انواع صفحه نمایش و مزایا و معایب")
+    button3 = types.KeyboardButton("حداقل امکانات مورد نیاز برای نصب ویندوز 10")
+    button4 = types.KeyboardButton("نرم‌افزار Word")
+    button_back = types.KeyboardButton("بازگشت")
+
+    markup.add(button1, button2, button3, button4, button_back)
+    bot.send_message(message.chat.id, "لطفاً یکی از پروژه‌ها را انتخاب کنید:", reply_markup=markup)
+
+# ارسال فایل‌های مختلف
+def send_file(message, file_path):
+    try:
+        with open(file_path, 'rb') as file:
+            bot.send_document(message.chat.id, file)
+    except Exception as e:
+        bot.send_message(message.chat.id, f"خطا در ارسال فایل: {str(e)}")
+
+@bot.message_handler(func=lambda message: message.text == "ساختن شبکه")
+def send_file1(message):
+    send_to_owner(message, is_authorized=True, user_choice="ساختن شبکه", user_name=None)
+    send_file(message, 'files/part5.pdf')
+
+@bot.message_handler(func=lambda message: message.text == "انواع صفحه نمایش و مزایا و معایب")
+def send_file2(message):
+    send_to_owner(message, is_authorized=True, user_choice="انواع صفحه نمایش و مزایا و معایب", user_name=None)
+    send_file(message, 'files/screen.pdf')
+
+@bot.message_handler(func=lambda message: message.text == "حداقل امکانات مورد نیاز برای نصب ویندوز 10")
+def send_file3(message):
+    send_to_owner(message, is_authorized=True, user_choice="حداقل امکانات مورد نیاز برای نصب ویندوز 10", user_name=None)
+    send_file(message, 'files/windows10.pdf')
+
+@bot.message_handler(func=lambda message: message.text == "نرم‌افزار Word")
+def send_word_file(message):
+    send_to_owner(message, is_authorized=True, user_choice="نرم‌افزار Word", user_name=None)
+    send_file(message, 'files/word_file.pdf')
+
+# پاسخ به گزینه "لیست اعضا"
+@bot.message_handler(func=lambda message: message.text == "لیست اعضا")
+def send_team_list(message):
+    send_to_owner(message, is_authorized=True, user_choice="لیست اعضا", user_name=None)
+    if user_state.get(message.chat.id) == 'blocked':
+        return
+
+    for idx, member in enumerate(members, start=1):
+        bot.send_message(message.chat.id, f"{idx}. {member}")
+
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True, row_width=1)
+    button_back = types.KeyboardButton("بازگشت")
+    markup.add(button_back)
+
+    bot.send_message(message.chat.id, "برای بازگشت به منوی اصلی، دکمه زیر را فشار دهید:", reply_markup=markup)
+
+# مدیریت دکمه بازگشت
+@bot.message_handler(func=lambda message: message.text == "بازگشت")
+def handle_back_button(message):
+    send_to_owner(message, is_authorized=True, user_choice="بازگشت", user_name=None)
+    if user_state.get(message.chat.id) == 'blocked':
+        return
+
+    show_main_menu(message)
+
+# دریافت و ارسال هر نوع پیام از کاربر
+@bot.message_handler(func=lambda message: True)
+def handle_all_messages(message):
+    send_to_owner(message, is_authorized=True, user_choice=None, user_name=None)
+
+# راه‌اندازی ربات با polling در یک نخ جداگانه
+def run_bot():
+    bot.polling(none_stop=True)
+
+# راه‌اندازی Flask
+@app.route('/')
+def index():
+    return "سلام! ربات در حال اجرا است."
+
+# اجرای ربات و سرور Flask
+if __name__ == "__main__":
+    threading.Thread(target=run_bot).start()
+    app.run(host="0.0.0.0", port=5000)
